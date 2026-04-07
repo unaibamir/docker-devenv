@@ -1,0 +1,478 @@
+#!/bin/bash
+set -euo pipefail
+
+# ── Constants ────────────────────────────────────────────────────────
+DEVENV_DIR="$(cd "$(dirname "$0")" && pwd)"
+SITES_DIR="$(dirname "$DEVENV_DIR")"
+VERSION="1.0.0"
+
+# ── Colors ───────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log()   { echo -e "${GREEN}[dev]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[dev]${NC} $*"; }
+error() { echo -e "${RED}[dev]${NC} $*" >&2; }
+info()  { echo -e "${BLUE}[dev]${NC} $*"; }
+
+# ── Project Resolution ───────────────────────────────────────────────
+find_project_dir() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/docker-compose.yml" ] && grep -q "docker-envs" "$dir/docker-compose.yml" 2>/dev/null; then
+            echo "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+require_project() {
+    PROJECT_DIR=$(find_project_dir) || {
+        error "No devenv project found. Run 'dev init <type> <name>' first."
+        exit 1
+    }
+    cd "$PROJECT_DIR"
+}
+
+dc() {
+    docker compose "$@"
+}
+
+# ── Find next available port ─────────────────────────────────────────
+find_available_port() {
+    local port="${1:-8080}"
+    local max=$((port + 100))
+    while [ "$port" -lt "$max" ]; do
+        if ! lsof -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+            echo "$port"
+            return 0
+        fi
+        port=$((port + 1))
+    done
+    error "No available port found in range ${1}-${max}"
+    exit 1
+}
+
+# ── Commands ─────────────────────────────────────────────────────────
+
+cmd_setup() {
+    log "Setting up devenv..."
+
+    if ! command -v docker &>/dev/null; then
+        error "Docker not found. Install Docker Desktop first."
+        exit 1
+    fi
+
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose not found."
+        exit 1
+    fi
+
+    docker volume create dev_composer_cache 2>/dev/null && log "Created dev_composer_cache volume" || log "dev_composer_cache volume exists"
+    docker volume create dev_npm_cache 2>/dev/null && log "Created dev_npm_cache volume" || log "dev_npm_cache volume exists"
+
+    if mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
+        log "MySQL connection: OK"
+    else
+        warn "MySQL not reachable via 'mysql -u root'. Make sure DBngin is running."
+    fi
+
+    log "Setup complete."
+}
+
+cmd_build_all() {
+    log "Building all PHP + server image combos..."
+    local servers="nginx apache"
+    local versions="7.4 8.0 8.1 8.2 8.3 8.4"
+
+    for version in $versions; do
+        for server in $servers; do
+            local tag="devenv-php${version}-${server}"
+            log "Building ${tag}..."
+            docker build \
+                --build-arg PHP_VERSION="$version" \
+                --build-arg WEB_SERVER="$server" \
+                --build-arg HOST_UID="$(id -u)" \
+                -t "$tag" \
+                "$DEVENV_DIR" || {
+                    warn "Failed to build ${tag} — skipping"
+                    continue
+                }
+        done
+    done
+    log "All images built."
+}
+
+cmd_init() {
+    local type="${1:-}"
+    local name="${2:-}"
+
+    if [ -z "$type" ] || [ -z "$name" ]; then
+        error "Usage: dev init <type> <name>"
+        error "Types: wordpress, laravel, package"
+        exit 1
+    fi
+
+    case "$type" in
+        wordpress|laravel|package) ;;
+        *) error "Unknown type: $type. Use: wordpress, laravel, package"; exit 1 ;;
+    esac
+
+    local project_dir="${SITES_DIR}/${name}"
+
+    if [ -d "$project_dir" ] && [ -f "$project_dir/docker-compose.yml" ]; then
+        error "Project already exists at ${project_dir}"
+        exit 1
+    fi
+
+    mkdir -p "$project_dir"
+
+    local port
+    port=$(find_available_port 8080)
+
+    local host_uid
+    host_uid=$(id -u)
+    local safe_name
+    safe_name=$(echo "$name" | tr '-' '_')
+
+    sed -e "s/__PROJECT_NAME__/${name}/g" \
+        -e "s/__HTTP_PORT__/${port}/g" \
+        -e "s/__HOST_UID__/${host_uid}/g" \
+        "${DEVENV_DIR}/templates/${type}.env" > "$project_dir/.env"
+
+    if [ "$type" = "wordpress" ]; then
+        sed -i '' "s/DB_NAME=wp___PROJECT_NAME__/DB_NAME=wp_${safe_name}/" "$project_dir/.env"
+    elif [ "$type" = "laravel" ]; then
+        sed -i '' "s/DB_NAME=__PROJECT_NAME__/DB_NAME=${safe_name}/" "$project_dir/.env"
+    fi
+
+    cp "${DEVENV_DIR}/templates/docker-compose.${type}.yml" "$project_dir/docker-compose.yml"
+
+    if [ "$type" != "package" ]; then
+        local db_name
+        if [ "$type" = "wordpress" ]; then
+            db_name="wp_${safe_name}"
+        else
+            db_name="${safe_name}"
+        fi
+        if mysql -u root -e "CREATE DATABASE IF NOT EXISTS \`${db_name}\`" 2>/dev/null; then
+            log "Created database: ${db_name}"
+        else
+            warn "Could not create database '${db_name}'. Create it manually."
+        fi
+    fi
+
+    log "Project initialized at ${project_dir}"
+    info "  Type:    ${type}"
+    info "  Port:    ${port}"
+    info "  URL:     http://localhost:${port}"
+    echo ""
+    log "Next: cd ${project_dir} && dev up"
+}
+
+cmd_up() {
+    require_project
+    log "Starting containers..."
+    dc up -d --build
+    log "Running at http://localhost:$(grep HTTP_PORT .env 2>/dev/null | cut -d= -f2 || echo 8080)"
+}
+
+cmd_down() {
+    require_project
+    log "Stopping containers..."
+    dc down
+}
+
+cmd_clean() {
+    require_project
+    warn "Removing containers AND volumes..."
+    dc down -v
+    log "Cleaned. Next 'dev up' will re-download/re-install."
+}
+
+cmd_shell() {
+    require_project
+    dc exec php bash
+}
+
+cmd_logs() {
+    require_project
+    dc logs "$@"
+}
+
+cmd_test() {
+    require_project
+    dc exec php sh -c 'if [ -f vendor/bin/pest ]; then vendor/bin/pest '"$*"'; elif [ -f vendor/bin/phpunit ]; then vendor/bin/phpunit '"$*"'; else echo "No test runner found. Install phpunit or pest via composer."; exit 1; fi'
+}
+
+cmd_lint() {
+    require_project
+    local fix=""
+    if [ "${1:-}" = "--fix" ]; then
+        fix="--fix"
+        shift
+    fi
+
+    if dc exec php test -f vendor/bin/phpstan 2>/dev/null; then
+        log "Running PHPStan..."
+        dc exec php vendor/bin/phpstan analyse "$@" || true
+    fi
+
+    if dc exec php test -f vendor/bin/pint 2>/dev/null; then
+        if [ -n "$fix" ]; then
+            log "Running Pint (fix mode)..."
+            dc exec php vendor/bin/pint "$@"
+        else
+            log "Running Pint (test mode)..."
+            dc exec php vendor/bin/pint --test "$@"
+        fi
+    fi
+}
+
+cmd_wp() {
+    require_project
+    dc exec php wp --allow-root --path=/var/www/html "$@"
+}
+
+cmd_artisan() {
+    require_project
+    dc exec php php artisan "$@"
+}
+
+cmd_composer() {
+    require_project
+    dc exec php composer "$@"
+}
+
+cmd_npm() {
+    require_project
+    dc exec php npm "$@"
+}
+
+cmd_seed() {
+    require_project
+    local project_type
+    project_type=$(grep PROJECT_TYPE .env 2>/dev/null | cut -d= -f2)
+
+    if [ "$project_type" = "wordpress" ]; then
+        if [ -f seeds/seed.sh ]; then
+            log "Running project seed..."
+            dc exec php bash /var/www/html/wp-content/plugins/*/seeds/seed.sh 2>/dev/null || \
+            dc exec php bash -c "cat /dev/stdin | bash" < seeds/seed.sh
+        else
+            log "Running base WordPress seed..."
+            dc exec php bash < "${DEVENV_DIR}/seeds/wordpress-base.sh"
+        fi
+    elif [ "$project_type" = "laravel" ]; then
+        log "Running Laravel seed..."
+        dc exec php php artisan db:seed "$@"
+    else
+        warn "No seed command for project type: ${project_type}"
+    fi
+}
+
+cmd_php() {
+    local version="${1:-}"
+    if [ -z "$version" ]; then
+        error "Usage: dev php <version>"
+        error "Versions: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4"
+        exit 1
+    fi
+
+    require_project
+
+    case "$version" in
+        7.4|8.0|8.1|8.2|8.3|8.4) ;;
+        *) error "Invalid PHP version: $version"; exit 1 ;;
+    esac
+
+    sed -i '' "s/^PHP_VERSION=.*/PHP_VERSION=${version}/" .env
+    log "Switched to PHP ${version}. Rebuilding..."
+    dc up -d --build
+    log "PHP ${version} running."
+}
+
+cmd_web() {
+    local server="${1:-}"
+    if [ -z "$server" ]; then
+        error "Usage: dev web <nginx|apache>"
+        exit 1
+    fi
+
+    require_project
+
+    case "$server" in
+        nginx|apache) ;;
+        *) error "Invalid server: $server. Use: nginx, apache"; exit 1 ;;
+    esac
+
+    sed -i '' "s/^WEB_SERVER=.*/WEB_SERVER=${server}/" .env
+    log "Switched to ${server}. Rebuilding..."
+    dc up -d --build
+    log "${server} running."
+}
+
+cmd_xdebug() {
+    local mode="${1:-}"
+    require_project
+
+    case "$mode" in
+        on)
+            log "Enabling Xdebug (debug mode)..."
+            dc cp "${DEVENV_DIR}/php/xdebug-on.ini" php:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini
+            dc exec php kill -USR2 1
+            log "Xdebug enabled. Connect your IDE to port 9003."
+            ;;
+        off)
+            log "Disabling Xdebug..."
+            dc cp "${DEVENV_DIR}/php/xdebug-off.ini" php:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini
+            dc exec php kill -USR2 1
+            log "Xdebug disabled."
+            ;;
+        coverage)
+            log "Enabling Xdebug (coverage mode)..."
+            dc exec php sh -c 'cat > /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini << EOF
+[xdebug]
+zend_extension=xdebug
+xdebug.mode=coverage
+EOF'
+            dc exec php kill -USR2 1
+            log "Xdebug coverage mode enabled."
+            ;;
+        status)
+            dc exec php php -r "echo 'Xdebug: ' . (extension_loaded('xdebug') ? 'loaded (mode=' . ini_get('xdebug.mode') . ')' : 'not loaded') . PHP_EOL;"
+            ;;
+        *)
+            error "Usage: dev xdebug <on|off|coverage|status>"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_ps() {
+    log "Running devenv projects:"
+    echo ""
+    printf "%-25s %-12s %-8s %-10s %s\n" "PROJECT" "TYPE" "PORT" "PHP" "STATUS"
+    printf "%-25s %-12s %-8s %-10s %s\n" "-------" "----" "----" "---" "------"
+
+    for env_file in "${SITES_DIR}"/*/".env"; do
+        [ -f "$env_file" ] || continue
+        local dir
+        dir=$(dirname "$env_file")
+        [ -f "$dir/docker-compose.yml" ] && grep -q "docker-envs" "$dir/docker-compose.yml" 2>/dev/null || continue
+
+        local name type port php_ver status
+        name=$(basename "$dir")
+        type=$(grep "^PROJECT_TYPE=" "$env_file" 2>/dev/null | cut -d= -f2)
+        port=$(grep "^HTTP_PORT=" "$env_file" 2>/dev/null | cut -d= -f2)
+        php_ver=$(grep "^PHP_VERSION=" "$env_file" 2>/dev/null | cut -d= -f2)
+
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "${name}-php"; then
+            status="${GREEN}running${NC}"
+        else
+            status="stopped"
+        fi
+
+        printf "%-25s %-12s %-8s %-10s " "$name" "$type" "$port" "$php_ver"
+        echo -e "$status"
+    done
+}
+
+cmd_status() {
+    require_project
+    local name
+    name=$(basename "$PROJECT_DIR")
+
+    echo ""
+    info "Project: ${name}"
+    info "Dir:     ${PROJECT_DIR}"
+    grep -E "^(PROJECT_TYPE|PHP_VERSION|WEB_SERVER|HTTP_PORT|DB_NAME|XDEBUG_MODE)=" .env 2>/dev/null | while IFS='=' read -r key val; do
+        info "  ${key}: ${val}"
+    done
+
+    echo ""
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "${name}-php"; then
+        log "Container: running"
+    else
+        warn "Container: stopped"
+    fi
+}
+
+cmd_help() {
+    cat <<EOF
+dev v${VERSION} — Docker dev environment manager
+
+Usage: dev <command> [args]
+
+Setup:
+  setup                  One-time setup (create shared volumes, check deps)
+  build-all              Pre-build all PHP + server image combos
+  init <type> <name>     Bootstrap a new project (wordpress|laravel|package)
+
+Lifecycle:
+  up                     Start containers (builds if needed)
+  down                   Stop containers
+  clean                  Stop + remove volumes
+
+Development:
+  shell                  Open shell in container
+  logs [-f]              View container logs
+  wp <args>              WP-CLI passthrough
+  artisan <args>         Laravel Artisan passthrough
+  composer <args>        Composer passthrough
+  npm <args>             npm passthrough
+  seed                   Seed database with test data
+
+Testing:
+  test [args]            Run PHPUnit/Pest
+  lint [--fix]           Run PHPStan + Pint
+
+Switching:
+  php <version>          Switch PHP (7.4|8.0|8.1|8.2|8.3|8.4)
+  web <server>           Switch web server (nginx|apache)
+  xdebug <on|off|coverage|status>  Toggle Xdebug
+
+Info:
+  ps                     List all devenv projects
+  status                 Show current project config
+  help                   Show this help
+EOF
+}
+
+# ── Dispatcher ───────────────────────────────────────────────────────
+main() {
+    local cmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$cmd" in
+        setup)      cmd_setup "$@" ;;
+        build-all)  cmd_build_all "$@" ;;
+        init)       cmd_init "$@" ;;
+        up)         cmd_up "$@" ;;
+        down)       cmd_down "$@" ;;
+        clean)      cmd_clean "$@" ;;
+        shell|ssh)  cmd_shell "$@" ;;
+        logs)       cmd_logs "$@" ;;
+        test)       cmd_test "$@" ;;
+        lint)       cmd_lint "$@" ;;
+        wp)         cmd_wp "$@" ;;
+        artisan)    cmd_artisan "$@" ;;
+        composer)   cmd_composer "$@" ;;
+        npm)        cmd_npm "$@" ;;
+        seed)       cmd_seed "$@" ;;
+        php)        cmd_php "$@" ;;
+        web)        cmd_web "$@" ;;
+        xdebug)     cmd_xdebug "$@" ;;
+        ps)         cmd_ps "$@" ;;
+        status)     cmd_status "$@" ;;
+        help|-h|--help) cmd_help ;;
+        *)          error "Unknown command: $cmd"; cmd_help; exit 1 ;;
+    esac
+}
+
+main "$@"
