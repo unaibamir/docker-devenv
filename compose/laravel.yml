@@ -1,12 +1,56 @@
 services:
   php:
+    image: devenv-php${PHP_VERSION:-8.3}-${WEB_SERVER:-nginx}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: ${PHP_VERSION:-8.3}
+        WEB_SERVER: ${WEB_SERVER:-nginx}
+        HOST_UID: ${HOST_UID:-501}
+    container_name: ${COMPOSE_PROJECT_NAME:-dev}-php
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-dev}
+      PROJECT_TYPE: laravel
+      WEB_SERVER: ${WEB_SERVER:-nginx}
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      DB_HOST: host.docker.internal
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-devdb}
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      XDEBUG_MODE: ${XDEBUG_MODE:-off}
     volumes:
+      - ../php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+      - ../php/xdebug-off.ini:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini:ro
+      - ../entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - dev_composer_cache:/home/www-data/.composer/cache
+      - dev_npm_cache:/home/www-data/.npm
       - ${PROJECT_ROOT:-.}:/var/www/html:cached
       - laravel_vendor:/var/www/html/vendor
       - laravel_node_modules:/var/www/html/node_modules
       - ../nginx/laravel.conf:/etc/nginx/http.d/default.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
 
 volumes:
+  dev_composer_cache:
+    external: true
+    name: dev_composer_cache
+  dev_npm_cache:
+    external: true
+    name: dev_npm_cache
   laravel_vendor:
     name: ${COMPOSE_PROJECT_NAME:-dev}-vendor
   laravel_node_modules:

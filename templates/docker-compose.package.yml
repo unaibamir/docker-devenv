@@ -1,3 +1,2 @@
 include:
-  - path: ../docker-envs/compose/base.yml
   - path: ../docker-envs/compose/package.yml
