@@ -145,11 +145,9 @@ cmd_init() {
         -e "s/__HOST_UID__/${host_uid}/g" \
         "${DEVENV_DIR}/templates/${type}.env" > "$project_dir/.env"
 
-    if [ "$type" = "wordpress" ]; then
-        sed -i '' "s/DB_NAME=wp___PROJECT_NAME__/DB_NAME=wp_${safe_name}/" "$project_dir/.env"
-    elif [ "$type" = "laravel" ]; then
-        sed -i '' "s/DB_NAME=__PROJECT_NAME__/DB_NAME=${safe_name}/" "$project_dir/.env"
-    fi
+    # Fix DB_NAME to use underscores (MySQL doesn't allow hyphens in unquoted names)
+    sed -i '' "s/^DB_NAME=wp_${name}/DB_NAME=wp_${safe_name}/" "$project_dir/.env"
+    sed -i '' "s/^DB_NAME=${name}/DB_NAME=${safe_name}/" "$project_dir/.env"
 
     cp "${DEVENV_DIR}/templates/docker-compose.${type}.yml" "$project_dir/docker-compose.yml"
 
