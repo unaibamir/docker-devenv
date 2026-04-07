@@ -1,0 +1,7 @@
+# Local overrides
+.env
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
