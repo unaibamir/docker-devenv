@@ -1,0 +1,10 @@
+services:
+  php:
+    volumes:
+      - wp_core:/var/www/html
+      - ${PROJECT_ROOT:-.}:/var/www/html/wp-content/plugins/${PLUGIN_SLUG}:cached
+      - ../nginx/wordpress.conf:/etc/nginx/http.d/default.conf:ro
+
+volumes:
+  wp_core:
+    name: ${COMPOSE_PROJECT_NAME:-dev}-wp-core

@@ -1,0 +1,13 @@
+services:
+  php:
+    volumes:
+      - ${PROJECT_ROOT:-.}:/var/www/html:cached
+      - laravel_vendor:/var/www/html/vendor
+      - laravel_node_modules:/var/www/html/node_modules
+      - ../nginx/laravel.conf:/etc/nginx/http.d/default.conf:ro
+
+volumes:
+  laravel_vendor:
+    name: ${COMPOSE_PROJECT_NAME:-dev}-vendor
+  laravel_node_modules:
+    name: ${COMPOSE_PROJECT_NAME:-dev}-node-modules

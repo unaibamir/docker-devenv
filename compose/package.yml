@@ -1,0 +1,10 @@
+services:
+  php:
+    volumes:
+      - ${PROJECT_ROOT:-.}:/var/www/html:cached
+    healthcheck:
+      test: ["CMD", "php", "-r", "echo 'ok';"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    command: ["php-fpm", "-F"]
