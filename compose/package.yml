@@ -23,6 +23,11 @@ services:
       - dev_npm_cache:/home/www-data/.npm
       - ${PROJECT_ROOT:-.}:/var/www/html:cached
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "php", "-r", "echo 'ok';"]
       interval: 10s
