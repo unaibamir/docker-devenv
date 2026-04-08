@@ -53,10 +53,14 @@ fi
 
 # ── 2. Laravel: composer install if vendor missing ──────────────────
 if [ "$PROJECT_TYPE" = "laravel" ] && [ ! -f /var/www/html/vendor/autoload.php ]; then
-    log "Running composer install..."
-    cd /var/www/html
-    composer install --no-interaction --prefer-dist --optimize-autoloader
-    log "Composer install complete."
+    if [ -f /var/www/html/composer.json ]; then
+        log "Running composer install..."
+        cd /var/www/html
+        composer install --no-interaction --prefer-dist --optimize-autoloader
+        log "Composer install complete."
+    else
+        log "No composer.json found — skipping composer install."
+    fi
 fi
 
 # ── 3. Fix ownership ───────────────────────────────────────────────
