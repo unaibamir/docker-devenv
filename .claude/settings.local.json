@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:runcloud.io)",
+      "WebSearch",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''runcloud-php-manager.py'', doraise=True\\)\")",
+      "Bash(python3 runcloud-php-manager.py:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -c \"\nimport requests\nTOKEN = open\\(''/Users/unaibamir/sites/avia-runcloud/runcloud-php-manager.py''\\).read\\(\\).split\\(''API_TOKEN = \"\"''\\)[1].split\\(''\"\"''\\)[0]\ns = requests.Session\\(\\)\ns.headers.update\\({\n    ''Authorization'': f''Bearer {TOKEN}'',\n    ''Accept'': ''application/json'',\n    ''Content-Type'': ''application/json'',\n}\\)\nr = s.get\\(''https://manage.runcloud.io/api/v3/servers''\\)\nprint\\(f''Status: {r.status_code}''\\)\nprint\\(f''Response: {r.text[:200]}''\\)\n\")",
+      "Bash(python3 -c \"\nimport requests\nTOKEN = open\\(''/Users/unaibamir/sites/avia-runcloud/runcloud-php-manager.py''\\).read\\(\\).split\\(''API_TOKEN = \"\"''\\)[1].split\\(''\"\"''\\)[0]\ns = requests.Session\\(\\)\ns.headers.update\\({\n    ''Authorization'': f''Bearer {TOKEN}'',\n    ''Accept'': ''application/json'',\n    ''Content-Type'': ''application/json'',\n    ''User-Agent'': ''RunCloudPHPManager/1.0'',\n}\\)\nr = s.get\\(''https://manage.runcloud.io/api/v3/servers''\\)\nprint\\(f''Status: {r.status_code}''\\)\nprint\\(f''Response: {r.text[:200]}''\\)\n\")",
+      "Bash(chmod:*)",
+      "WebFetch(domain:www.toptal.com)",
+      "Bash(docker build:*)",
+      "Bash(docker volume:*)",
+      "Bash(export PATH=\"$HOME/sites/docker-envs:$PATH\")",
+      "Bash(dev up:*)",
+      "Bash(docker compose logs:*)",
+      "Bash(docker compose:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/)",
+      "Bash(curl -s http://localhost:8080/healthcheck)",
+      "Bash(dev wp:*)",
+      "Bash(dev status:*)",
+      "Bash(dev xdebug:*)",
+      "Bash(dev ps:*)",
+      "Bash(dev down:*)",
+      "Bash(dev init:*)"
+    ]
+  }
+}
