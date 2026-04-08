@@ -18,17 +18,28 @@ warn()  { echo -e "${YELLOW}[dev]${NC} $*"; }
 error() { echo -e "${RED}[dev]${NC} $*" >&2; }
 info()  { echo -e "${BLUE}[dev]${NC} $*"; }
 
+# ── Portable sed in-place ────────────────────────────────────────────
+sed_i() {
+    if [[ "$OSTYPE" == darwin* ]]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
 # ── MySQL helper (auto-detect DBngin socket) ─────────────────────────
 mysql_cmd() {
-    if mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
-        mysql -u root "$@"
-    elif [ -S /tmp/mysql_3306.sock ]; then
-        mysql -u root --socket=/tmp/mysql_3306.sock "$@"
-    elif [ -S /tmp/mysql.sock ]; then
-        mysql -u root --socket=/tmp/mysql.sock "$@"
+    local sock=""
+    if mysql -u root -e "SELECT 1" &>/dev/null; then
+        sock=""
+    elif [ -S /tmp/mysql_3306.sock ] && mysql -u root --socket=/tmp/mysql_3306.sock -e "SELECT 1" &>/dev/null; then
+        sock="--socket=/tmp/mysql_3306.sock"
+    elif [ -S /tmp/mysql.sock ] && mysql -u root --socket=/tmp/mysql.sock -e "SELECT 1" &>/dev/null; then
+        sock="--socket=/tmp/mysql.sock"
     else
         return 1
     fi
+    mysql -u root $sock "$@"
 }
 
 # ── Project Resolution ───────────────────────────────────────────────
@@ -53,6 +64,10 @@ require_project() {
 }
 
 dc() {
+    if ! docker info &>/dev/null; then
+        error "Docker is not running. Start Docker Desktop or OrbStack first."
+        exit 1
+    fi
     docker compose "$@"
 }
 
@@ -89,7 +104,7 @@ cmd_setup() {
     docker volume create dev_composer_cache 2>/dev/null && log "Created dev_composer_cache volume" || log "dev_composer_cache volume exists"
     docker volume create dev_npm_cache 2>/dev/null && log "Created dev_npm_cache volume" || log "dev_npm_cache volume exists"
 
-    if mysql_cmd -e "SELECT 1" &>/dev/null 2>&1; then
+    if mysql_cmd -e "SELECT 1" &>/dev/null; then
         log "MySQL connection: OK"
     else
         warn "MySQL not reachable. Make sure DBngin is running."
@@ -158,10 +173,20 @@ cmd_init() {
         *) error "Unknown type: $type. Use: wordpress, laravel, package"; exit 1 ;;
     esac
 
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        error "Invalid name '${name}': use only lowercase letters, numbers, hyphens, underscores. Must start with letter or number."
+        exit 1
+    fi
+    if [ ${#name} -gt 50 ]; then
+        error "Name too long (max 50 chars)"
+        exit 1
+    fi
+
     local project_dir="${SITES_DIR}/${name}"
 
-    if [ -d "$project_dir" ] && [ -f "$project_dir/docker-compose.yml" ]; then
-        error "Project already exists at ${project_dir}"
+    if [ -d "$project_dir" ]; then
+        error "Directory '${project_dir}' already exists."
+        error "Choose a different name to avoid conflicts with existing projects."
         exit 1
     fi
 
@@ -181,8 +206,8 @@ cmd_init() {
         "${DEVENV_DIR}/templates/${type}.env" > "$project_dir/.env"
 
     # Fix DB_NAME to use underscores (MySQL doesn't allow hyphens in unquoted names)
-    sed -i '' "s/^DB_NAME=wp_${name}/DB_NAME=wp_${safe_name}/" "$project_dir/.env"
-    sed -i '' "s/^DB_NAME=${name}/DB_NAME=${safe_name}/" "$project_dir/.env"
+    sed_i "s/^DB_NAME=wp_${name}/DB_NAME=wp_${safe_name}/" "$project_dir/.env"
+    sed_i "s/^DB_NAME=${name}/DB_NAME=${safe_name}/" "$project_dir/.env"
 
     cp "${DEVENV_DIR}/templates/docker-compose.${type}.yml" "$project_dir/docker-compose.yml"
 
@@ -212,7 +237,9 @@ cmd_up() {
     require_project
     log "Starting containers..."
     dc up -d --build
-    log "Running at http://localhost:$(grep HTTP_PORT .env 2>/dev/null | cut -d= -f2 || echo 8080)"
+    local port
+    port=$(grep "^HTTP_PORT=" .env 2>/dev/null | cut -d= -f2)
+    log "Running at http://localhost:${port:-8080}"
 }
 
 cmd_down() {
@@ -223,7 +250,14 @@ cmd_down() {
 
 cmd_clean() {
     require_project
-    warn "Removing containers AND volumes..."
+    warn "This will remove ALL containers and volumes (WP core, vendor, node_modules)."
+    warn "Database on host MySQL will NOT be removed."
+    printf "Continue? [y/N] "
+    read -r confirm
+    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        log "Aborted."
+        exit 0
+    fi
     dc down -v
     log "Cleaned. Next 'dev up' will re-download/re-install."
 }
@@ -240,7 +274,14 @@ cmd_logs() {
 
 cmd_test() {
     require_project
-    dc exec php sh -c 'if [ -f vendor/bin/pest ]; then vendor/bin/pest '"$*"'; elif [ -f vendor/bin/phpunit ]; then vendor/bin/phpunit '"$*"'; else echo "No test runner found. Install phpunit or pest via composer."; exit 1; fi'
+    if dc exec php test -f vendor/bin/pest 2>/dev/null; then
+        dc exec php -- vendor/bin/pest "$@"
+    elif dc exec php test -f vendor/bin/phpunit 2>/dev/null; then
+        dc exec php -- vendor/bin/phpunit "$@"
+    else
+        error "No test runner found. Install phpunit or pest via composer."
+        exit 1
+    fi
 }
 
 cmd_lint() {
@@ -269,22 +310,22 @@ cmd_lint() {
 
 cmd_wp() {
     require_project
-    dc exec php wp --allow-root --path=/var/www/html "$@"
+    dc exec php -- wp --allow-root --path=/var/www/html "$@"
 }
 
 cmd_artisan() {
     require_project
-    dc exec php php artisan "$@"
+    dc exec php -- php artisan "$@"
 }
 
 cmd_composer() {
     require_project
-    dc exec php composer "$@"
+    dc exec php -- composer "$@"
 }
 
 cmd_npm() {
     require_project
-    dc exec php npm "$@"
+    dc exec php -- npm "$@"
 }
 
 cmd_seed() {
@@ -295,8 +336,7 @@ cmd_seed() {
     if [ "$project_type" = "wordpress" ]; then
         if [ -f seeds/seed.sh ]; then
             log "Running project seed..."
-            dc exec php bash /var/www/html/wp-content/plugins/*/seeds/seed.sh 2>/dev/null || \
-            dc exec php bash -c "cat /dev/stdin | bash" < seeds/seed.sh
+            dc exec -T php bash < seeds/seed.sh
         else
             log "Running base WordPress seed..."
             dc exec php bash < "${DEVENV_DIR}/seeds/wordpress-base.sh"
@@ -324,7 +364,7 @@ cmd_php() {
         *) error "Invalid PHP version: $version"; exit 1 ;;
     esac
 
-    sed -i '' "s/^PHP_VERSION=.*/PHP_VERSION=${version}/" .env
+    sed_i "s/^PHP_VERSION=.*/PHP_VERSION=${version}/" .env
     log "Switched to PHP ${version}. Rebuilding..."
     dc up -d --build
     log "PHP ${version} running."
@@ -344,7 +384,7 @@ cmd_web() {
         *) error "Invalid server: $server. Use: nginx, apache"; exit 1 ;;
     esac
 
-    sed -i '' "s/^WEB_SERVER=.*/WEB_SERVER=${server}/" .env
+    sed_i "s/^WEB_SERVER=.*/WEB_SERVER=${server}/" .env
     log "Switched to ${server}. Rebuilding..."
     dc up -d --build
     log "${server} running."
@@ -368,7 +408,8 @@ xdebug.discover_client_host=0
 xdebug.idekey=VSCODE
 xdebug.log_level=0
 EOF'
-            dc exec php kill -USR2 1
+            dc exec php sh -c 'kill -USR2 $(pgrep -o php-fpm)'
+            sed_i "s/^XDEBUG_MODE=.*/XDEBUG_MODE=debug/" .env 2>/dev/null || true
             log "Xdebug enabled. Connect your IDE to port 9003."
             ;;
         off)
@@ -378,7 +419,8 @@ EOF'
 ; Xdebug disabled
 xdebug.mode=off
 EOF'
-            dc exec php kill -USR2 1
+            dc exec php sh -c 'kill -USR2 $(pgrep -o php-fpm)'
+            sed_i "s/^XDEBUG_MODE=.*/XDEBUG_MODE=off/" .env 2>/dev/null || true
             log "Xdebug disabled."
             ;;
         coverage)
@@ -388,7 +430,8 @@ EOF'
 zend_extension=xdebug
 xdebug.mode=coverage
 EOF'
-            dc exec php kill -USR2 1
+            dc exec php sh -c 'kill -USR2 $(pgrep -o php-fpm)'
+            sed_i "s/^XDEBUG_MODE=.*/XDEBUG_MODE=coverage/" .env 2>/dev/null || true
             log "Xdebug coverage mode enabled."
             ;;
         status)
@@ -419,7 +462,7 @@ cmd_ps() {
         port=$(grep "^HTTP_PORT=" "$env_file" 2>/dev/null | cut -d= -f2)
         php_ver=$(grep "^PHP_VERSION=" "$env_file" 2>/dev/null | cut -d= -f2)
 
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "${name}-php"; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^${name}-php(-[0-9]+)?$"; then
             status="${GREEN}running${NC}"
         else
             status="stopped"
@@ -443,7 +486,7 @@ cmd_status() {
     done
 
     echo ""
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "${name}-php"; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^${name}-php(-[0-9]+)?$"; then
         log "Container: running"
     else
         warn "Container: stopped"
