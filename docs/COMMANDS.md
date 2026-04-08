@@ -7,7 +7,7 @@
 | `dev setup` | Creates shared Docker cache volumes (`dev_composer_cache`, `dev_npm_cache`), verifies Docker and MySQL are running. Run once on a fresh machine. |
 | `dev pull` | Pre-fetches all Alpine base images (`php:7.4-fpm-alpine` through `php:8.4-fpm-alpine`, `composer:2`, `nginx:alpine`). Run once so builds skip network downloads. |
 | `dev build-all` | Builds all 12 image combos (6 PHP versions x 2 web servers). Run if you want instant PHP/server switching with zero build wait. |
-| `dev init <type> <name>` | Creates a new project at `~/sites/<name>/` with `.env` and `docker-compose.yml`. Types: `wordpress`, `laravel`, `package`. Auto-assigns next free port starting at 8080, creates MySQL database. |
+| `dev init <type> <name>` | Creates a new project at `~/sites/<name>/` with `.env` and `docker-compose.yml`. Types: `wordpress`, `laravel`, `package`. Auto-assigns next free port starting at 8080, creates MySQL database. Project names must be lowercase letters, numbers, hyphens, or underscores only (max 50 chars, must start with a letter or number, directory must not already exist). |
 
 ## Lifecycle (daily use)
 
@@ -15,7 +15,7 @@
 |---|---|
 | `dev up` | Builds image if needed, starts the container. On first run for WordPress: downloads WP core, creates wp-config, installs WP, activates your plugin. For Laravel: runs `composer install` if vendor/ is missing. |
 | `dev down` | Stops and removes container. Keeps volumes (WP core, vendor, databases stay intact). |
-| `dev clean` | Stops container AND deletes all volumes. Next `dev up` starts completely fresh -- re-downloads WP, re-installs vendor. Use when things are broken. |
+| `dev clean` | Stops container AND deletes all volumes (prompts for confirmation). Next `dev up` starts completely fresh -- re-downloads WP, re-installs vendor. Use when things are broken. |
 
 ## Development (while working)
 
@@ -42,9 +42,9 @@
 |---|---|
 | `dev php <version>` | Switches PHP version. Valid: `7.4`, `8.0`, `8.1`, `8.2`, `8.3`, `8.4`. Rebuilds container, keeps your data. |
 | `dev web <server>` | Switches web server. Valid: `nginx`, `apache`. Rebuilds container. |
-| `dev xdebug on` | Enables step debugging. Connects to IDE on port 9003. No rebuild -- takes ~1 second. |
-| `dev xdebug off` | Disables Xdebug for better performance. |
-| `dev xdebug coverage` | Enables coverage mode for `--coverage` reports. |
+| `dev xdebug on` | Enables step debugging. Connects to IDE on port 9003. Persists to `.env`. No rebuild -- takes ~1 second. |
+| `dev xdebug off` | Disables Xdebug for better performance. Persists to `.env`. |
+| `dev xdebug coverage` | Enables coverage mode for `--coverage` reports. Persists to `.env`. |
 | `dev xdebug status` | Shows if Xdebug is loaded and current mode. |
 
 ## Info

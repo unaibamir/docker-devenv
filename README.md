@@ -33,6 +33,9 @@ git clone <repo-url> ~/sites/docker-envs
 # 2. Run one-time setup (creates shared cache volumes, checks deps)
 ~/sites/docker-envs/dev setup
 
+# 2b. (Optional) Pre-fetch base images for faster builds
+~/sites/docker-envs/dev pull
+
 # 3. Add dev to your PATH
 echo 'export PATH="$HOME/sites/docker-envs:$PATH"' >> ~/.zshrc && source ~/.zshrc
 
@@ -43,7 +46,7 @@ dev init wordpress my-plugin
 cd ~/sites/my-plugin && dev up
 ```
 
-Your WordPress site is now at `http://localhost:8080` with admin credentials `admin` / `admin`.
+Your WordPress site is now at `http://localhost:8080` (bound to `127.0.0.1` only, not accessible from LAN) with admin credentials `admin` / `admin`.
 
 ## Installation
 
@@ -53,6 +56,9 @@ git clone <repo-url> ~/sites/docker-envs
 
 # One-time setup: creates shared Docker volumes, verifies Docker and MySQL
 dev setup
+
+# (Optional) Pre-fetch base images for faster builds
+dev pull
 
 # (Optional) Pre-build all image combos to avoid build waits later
 dev build-all
@@ -115,8 +121,9 @@ What happens:
 | Command | Description |
 |---------|-------------|
 | `dev setup` | One-time setup. Creates shared `dev_composer_cache` and `dev_npm_cache` Docker volumes, verifies Docker and MySQL are available. |
+| `dev pull` | Pre-fetches all Alpine base images (PHP 7.4-8.4, nginx, composer) so builds skip network downloads. |
 | `dev build-all` | Pre-builds all 12 image combinations (PHP 7.4-8.4 x nginx/apache). Tags as `devenv-php<version>-<server>`. |
-| `dev init <type> <name>` | Bootstraps a new project. Types: `wordpress`, `laravel`, `package`. Creates directory, `.env`, `docker-compose.yml`, and database (if applicable). Auto-assigns the next available port starting from 8080. |
+| `dev init <type> <name>` | Bootstraps a new project. Types: `wordpress`, `laravel`, `package`. Creates directory, `.env`, `docker-compose.yml`, and database (if applicable). Auto-assigns the next available port starting from 8080. Project names must be lowercase letters, numbers, hyphens, or underscores only (max 50 chars). |
 
 ### Lifecycle
 
@@ -124,7 +131,7 @@ What happens:
 |---------|-------------|
 | `dev up` | Builds image (if needed) and starts container in detached mode. Runs the entrypoint which handles WordPress download or Laravel composer install on first boot. |
 | `dev down` | Stops and removes containers. Preserves volumes. |
-| `dev clean` | Stops containers AND removes volumes. Next `dev up` will re-download WordPress core / re-install vendor. |
+| `dev clean` | Stops containers AND removes volumes (with confirmation prompt). Next `dev up` will re-download WordPress core / re-install vendor. |
 
 ### Development
 
@@ -151,9 +158,9 @@ What happens:
 |---------|-------------|
 | `dev php <version>` | Switches PHP version. Valid: `7.4`, `8.0`, `8.1`, `8.2`, `8.3`, `8.4`. Updates `.env` and rebuilds the container. |
 | `dev web <server>` | Switches web server. Valid: `nginx`, `apache`. Updates `.env` and rebuilds the container. |
-| `dev xdebug on` | Enables Xdebug in debug mode (step debugging). Reloads PHP-FPM via `kill -USR2`. No container rebuild. |
-| `dev xdebug off` | Disables Xdebug. Reloads PHP-FPM. No container rebuild. |
-| `dev xdebug coverage` | Enables Xdebug in coverage-only mode (for `--coverage` reports). |
+| `dev xdebug on` | Enables Xdebug in debug mode (step debugging). Reloads PHP-FPM via `kill -USR2`. Persists to `.env`. No container rebuild. |
+| `dev xdebug off` | Disables Xdebug. Reloads PHP-FPM. Persists to `.env`. No container rebuild. |
+| `dev xdebug coverage` | Enables Xdebug in coverage-only mode (for `--coverage` reports). Persists to `.env`. |
 | `dev xdebug status` | Prints whether Xdebug is loaded and the current mode. |
 
 ### Info
@@ -175,7 +182,7 @@ Each project gets a `.env` file with these variables:
 | `PROJECT_ROOT` | `.` | Host path to the project source (relative to `.env` location). |
 | `PHP_VERSION` | `8.3` | PHP version for the container image. |
 | `WEB_SERVER` | `nginx` | Web server: `nginx` or `apache`. |
-| `HTTP_PORT` | auto-assigned | Host port mapped to container port 80. Starts at 8080, increments to find an open port. |
+| `HTTP_PORT` | auto-assigned | Host port mapped to container port 80 (bound to `127.0.0.1` only). Starts at 8080, increments to find an open port. |
 | `DB_NAME` | `wp_<name>` / `<name>` | Database name. WordPress projects are prefixed with `wp_`. Hyphens are converted to underscores. |
 | `DB_USER` | `root` | MySQL user. |
 | `DB_PASSWORD` | (empty) | MySQL password. |
@@ -204,11 +211,15 @@ dev web apache
 
 This updates `WEB_SERVER` in `.env` and rebuilds. The Dockerfile uses a multi-stage build where `server-nginx` and `server-apache` are separate stages. The final stage selects via `FROM server-${WEB_SERVER}`.
 
+Both nginx and apache configs are mounted into every container. The entrypoint starts whichever server matches `WEB_SERVER`. Switching between them works via `dev web apache` or `dev web nginx`.
+
 Each project type has both nginx and apache configs:
 - `nginx/wordpress.conf` -- document root at `/var/www/html`
 - `nginx/laravel.conf` -- document root at `/var/www/html/public`
 - `apache/wordpress.conf` -- same, with `AllowOverride All` for `.htaccess`
 - `apache/laravel.conf` -- same, pointing at `/public`
+
+All web configs include security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`), gzip compression, upload directory PHP execution blocking (WordPress), and dotfile/sensitive file blocking.
 
 ## Xdebug
 
@@ -221,7 +232,7 @@ dev xdebug coverage  # Code coverage mode
 dev xdebug status    # Check current state
 ```
 
-The toggle writes a new INI file inside the container and sends `USR2` to PHP-FPM (pid 1) to reload configuration. No container restart needed.
+The toggle writes a new INI file inside the container and sends `USR2` to PHP-FPM (found via `pgrep`) to reload configuration. No container restart needed. The current Xdebug mode is persisted to `.env` so it survives `dev down` / `dev up` cycles.
 
 ### VS Code Configuration
 
@@ -262,10 +273,10 @@ docker-envs/
 ├── Dockerfile              # Multi-stage: php-base → server-nginx/server-apache → final
 ├── entrypoint.sh           # Container startup: WP download, composer install, PHP-FPM + web server
 ├── compose/
-│   ├── base.yml            # Shared service definition (not used directly by projects)
-│   ├── wordpress.yml       # WordPress Compose config (wp_core volume, plugin bind mount, nginx conf)
-│   ├── laravel.yml         # Laravel Compose config (vendor/node_modules volumes, nginx conf)
-│   └── package.yml         # Package Compose config (no web server, php-fpm only)
+│   ├── base.yml            # Reference only (unused). Each type.yml below is self-contained.
+│   ├── wordpress.yml       # Self-contained WordPress Compose config (ports, volumes, healthcheck)
+│   ├── laravel.yml         # Self-contained Laravel Compose config (ports, volumes, healthcheck)
+│   └── package.yml         # Self-contained Package Compose config (no web server, php-fpm only)
 ├── templates/
 │   ├── wordpress.env       # .env template for WordPress projects
 │   ├── laravel.env         # .env template for Laravel projects
@@ -300,7 +311,7 @@ include:
   - path: ../docker-envs/compose/wordpress.yml
 ```
 
-This references the shared Compose config in `docker-envs/compose/`. The shared config defines the full service, volumes, ports, and environment -- the project only provides `.env` overrides.
+This references the shared Compose config in `docker-envs/compose/`. Each type file (`wordpress.yml`, `laravel.yml`, `package.yml`) is fully self-contained -- it defines the complete service, volumes, ports, healthcheck, and environment. Projects include a single file and provide `.env` overrides. `base.yml` exists as a reference only and is not used by any project.
 
 ### Multi-Stage Dockerfile
 
@@ -322,11 +333,13 @@ php-base (php:X.Y-fpm-alpine)
 
 ### Entrypoint Flow
 
-1. **WordPress**: If `wp-load.php` is missing, downloads WP core, creates `wp-config.php` (with debug constants), installs WP, and activates the plugin
-2. **Laravel**: If `vendor/autoload.php` is missing and `composer.json` exists, runs `composer install`
-3. Fixes ownership (`chown www-data:www-data`)
-4. Starts PHP-FPM in the background
-5. Starts nginx or Apache in the foreground
+1. **MySQL wait**: Waits up to 30 seconds for host MySQL to become reachable (WordPress and Laravel only)
+2. **WordPress**: If the `.devenv-installed` sentinel file is missing, downloads WP core, creates `wp-config.php` (with debug constants), installs WP, and activates the plugin. On subsequent boots, detects WP version mismatch and logs a warning if installed version differs from `WP_VERSION`.
+3. **Laravel**: If `vendor/autoload.php` is missing and `composer.json` exists, runs `composer install`
+4. Fixes ownership (`chown www-data:www-data`) -- full recursive on first run, top-level only on warm starts (sentinel: `.chown-done`)
+5. Creates `_health.php` healthcheck endpoint
+6. Starts PHP-FPM in the background
+7. Starts nginx or Apache in the foreground
 
 ### Host Networking
 
@@ -455,6 +468,8 @@ The container connects to MySQL on your host via `host.docker.internal:3306`.
 - Ensure MySQL is running (check DBngin)
 - Ensure MySQL allows connections from `root` without a password, or set `DB_PASSWORD` in `.env`
 - Test from the container: `dev shell` then `mysql -h host.docker.internal -u root`
+
+The `dev` CLI auto-detects DBngin sockets when running host-side MySQL commands (e.g., `dev setup`, `dev init`). It checks `/tmp/mysql_3306.sock` and `/tmp/mysql.sock` if a TCP connection fails.
 
 ### Permission Issues
 
