@@ -18,6 +18,19 @@ warn()  { echo -e "${YELLOW}[dev]${NC} $*"; }
 error() { echo -e "${RED}[dev]${NC} $*" >&2; }
 info()  { echo -e "${BLUE}[dev]${NC} $*"; }
 
+# ── MySQL helper (auto-detect DBngin socket) ─────────────────────────
+mysql_cmd() {
+    if mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
+        mysql -u root "$@"
+    elif [ -S /tmp/mysql_3306.sock ]; then
+        mysql -u root --socket=/tmp/mysql_3306.sock "$@"
+    elif [ -S /tmp/mysql.sock ]; then
+        mysql -u root --socket=/tmp/mysql.sock "$@"
+    else
+        return 1
+    fi
+}
+
 # ── Project Resolution ───────────────────────────────────────────────
 find_project_dir() {
     local dir="$PWD"
@@ -76,13 +89,35 @@ cmd_setup() {
     docker volume create dev_composer_cache 2>/dev/null && log "Created dev_composer_cache volume" || log "dev_composer_cache volume exists"
     docker volume create dev_npm_cache 2>/dev/null && log "Created dev_npm_cache volume" || log "dev_npm_cache volume exists"
 
-    if mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
+    if mysql_cmd -e "SELECT 1" &>/dev/null 2>&1; then
         log "MySQL connection: OK"
     else
-        warn "MySQL not reachable via 'mysql -u root'. Make sure DBngin is running."
+        warn "MySQL not reachable. Make sure DBngin is running."
+        warn "Tried: mysql -u root, socket /tmp/mysql_3306.sock, socket /tmp/mysql.sock"
     fi
 
     log "Setup complete."
+}
+
+cmd_pull() {
+    log "Pre-fetching base images for faster builds..."
+    local versions="7.4 8.0 8.1 8.2 8.3 8.4"
+    local images=(
+        "composer:2"
+        "nginx:alpine"
+    )
+
+    # Add all PHP FPM Alpine images
+    for version in $versions; do
+        images+=("php:${version}-fpm-alpine")
+    done
+
+    for img in "${images[@]}"; do
+        log "Pulling ${img}..."
+        docker pull "$img" || warn "Failed to pull ${img} — skipping"
+    done
+
+    log "All base images cached. Builds will be faster now."
 }
 
 cmd_build_all() {
@@ -158,7 +193,7 @@ cmd_init() {
         else
             db_name="${safe_name}"
         fi
-        if mysql -u root -e "CREATE DATABASE IF NOT EXISTS \`${db_name}\`" 2>/dev/null; then
+        if mysql_cmd -e "CREATE DATABASE IF NOT EXISTS \`${db_name}\`" 2>/dev/null; then
             log "Created database: ${db_name}"
         else
             warn "Could not create database '${db_name}'. Create it manually."
@@ -423,6 +458,7 @@ Usage: dev <command> [args]
 
 Setup:
   setup                  One-time setup (create shared volumes, check deps)
+  pull                   Pre-fetch all base images (Alpine PHP, nginx, composer)
   build-all              Pre-build all PHP + server image combos
   init <type> <name>     Bootstrap a new project (wordpress|laravel|package)
 
@@ -463,6 +499,7 @@ main() {
 
     case "$cmd" in
         setup)      cmd_setup "$@" ;;
+        pull)       cmd_pull "$@" ;;
         build-all)  cmd_build_all "$@" ;;
         init)       cmd_init "$@" ;;
         up)         cmd_up "$@" ;;
