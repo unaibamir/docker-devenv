@@ -52,12 +52,19 @@ RUN PHP_MAJOR_MINOR=$(echo "${PHP_VERSION}" | cut -d. -f1,2) \
 # Redis extension
 RUN pecl install redis && docker-php-ext-enable redis
 
+# Remove build dependencies (saves ~170MB)
+RUN apk del --no-network $PHPIZE_DEPS linux-headers \
+    && rm -rf /tmp/pear /tmp/pecl* /usr/src/php*
+
 # Composer 2
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # WP-CLI
 RUN curl -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
-    && chmod +x /usr/local/bin/wp
+    && curl -o /tmp/wp-cli.sha512 https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar.sha512 \
+    && echo "$(cat /tmp/wp-cli.sha512)  /usr/local/bin/wp" | sha512sum -c - \
+    && chmod +x /usr/local/bin/wp \
+    && rm /tmp/wp-cli.sha512
 
 # Match macOS user UID for permission-free bind mounts
 ARG HOST_UID=501
@@ -80,6 +87,9 @@ RUN apk add --no-cache apache2 apache2-proxy \
     && sed -i 's/^#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule proxy_module/LoadModule proxy_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule proxy_fcgi_module/LoadModule proxy_fcgi_module/' /etc/apache2/httpd.conf \
+    && sed -i 's/^#LoadModule headers_module/LoadModule headers_module/' /etc/apache2/httpd.conf \
+    && sed -i 's/^#LoadModule expires_module/LoadModule expires_module/' /etc/apache2/httpd.conf \
+    && sed -i 's/^#LoadModule deflate_module/LoadModule deflate_module/' /etc/apache2/httpd.conf \
     && mkdir -p /run/apache2
 
 # ── Final (selected by WEB_SERVER ARG) ──────────────────────────────
