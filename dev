@@ -339,7 +339,7 @@ cmd_seed() {
             dc exec -T php bash < seeds/seed.sh
         else
             log "Running base WordPress seed..."
-            dc exec php bash < "${DEVENV_DIR}/seeds/wordpress-base.sh"
+            dc exec -T php bash < "${DEVENV_DIR}/seeds/wordpress-base.sh"
         fi
     elif [ "$project_type" = "laravel" ]; then
         log "Running Laravel seed..."

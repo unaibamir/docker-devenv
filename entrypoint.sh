@@ -104,11 +104,17 @@ fi
 echo '<?php http_response_code(200); echo "ok";' > /var/www/html/_health.php
 chown www-data:www-data /var/www/html/_health.php 2>/dev/null || true
 
-# ── 5. Start PHP-FPM (background) ──────────────────────────────────
+# ── 5. Package/generic mode — PHP-FPM only, no web server ─────────
+if [ "$PROJECT_TYPE" = "package" ] || [ "$PROJECT_TYPE" = "generic" ]; then
+    log "Package mode — starting PHP-FPM in foreground."
+    exec php-fpm -F
+fi
+
+# ── 6. Start PHP-FPM (background) ──────────────────────────────────
 log "Starting PHP-FPM..."
 php-fpm -D
 
-# ── 6. Start web server (foreground) ───────────────────────────────
+# ── 7. Start web server (foreground) ───────────────────────────────
 if [ "$WEB_SERVER" = "nginx" ]; then
     log "Starting nginx on port 80..."
     exec nginx -g "daemon off;"
