@@ -85,13 +85,15 @@ RUN apk add --no-cache nginx \
 
 # ── Apache variant ──────────────────────────────────────────────────
 FROM php-base AS server-apache
-RUN apk add --no-cache apache2 apache2-proxy \
+RUN apk add --no-cache apache2 apache2-proxy apache2-ssl \
     && sed -i 's/^#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule proxy_module/LoadModule proxy_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule proxy_fcgi_module/LoadModule proxy_fcgi_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule headers_module/LoadModule headers_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule expires_module/LoadModule expires_module/' /etc/apache2/httpd.conf \
     && sed -i 's/^#LoadModule deflate_module/LoadModule deflate_module/' /etc/apache2/httpd.conf \
+    && sed -i 's/^#LoadModule ssl_module/LoadModule ssl_module/' /etc/apache2/httpd.conf \
+    && sed -i 's/^#LoadModule socache_shmcb_module/LoadModule socache_shmcb_module/' /etc/apache2/httpd.conf \
     && mkdir -p /run/apache2
 
 # ── Final (selected by WEB_SERVER ARG) ──────────────────────────────
