@@ -111,6 +111,14 @@ cmd_setup() {
         warn "Tried: mysql -u root, socket /tmp/mysql_3306.sock, socket /tmp/mysql.sock"
     fi
 
+    # Check Mailhog
+    if lsof -iTCP:1025 -sTCP:LISTEN -t &>/dev/null; then
+        log "Mailhog SMTP: OK (port 1025)"
+    else
+        warn "Mailhog not running. Start with: mailhog &"
+        warn "All PHP mail will fail silently until Mailhog is running."
+    fi
+
     log "Setup complete."
 }
 
@@ -194,6 +202,8 @@ cmd_init() {
 
     local port
     port=$(find_available_port 8080)
+    local https_port
+    https_port=$(find_available_port $((port + 363)))
 
     local host_uid
     host_uid=$(id -u)
@@ -202,6 +212,7 @@ cmd_init() {
 
     sed -e "s/__PROJECT_NAME__/${name}/g" \
         -e "s/__HTTP_PORT__/${port}/g" \
+        -e "s/__HTTPS_PORT__/${https_port}/g" \
         -e "s/__HOST_UID__/${host_uid}/g" \
         "${DEVENV_DIR}/templates/${type}.env" > "$project_dir/.env"
 
@@ -493,6 +504,50 @@ cmd_status() {
     fi
 }
 
+cmd_secure() {
+    log "Setting up HTTPS with mkcert..."
+
+    # Check mkcert installed
+    if ! command -v mkcert &>/dev/null; then
+        error "mkcert not installed. Run: brew install mkcert && mkcert -install"
+        exit 1
+    fi
+
+    # Create certs directory
+    mkdir -p "${DEVENV_DIR}/certs"
+
+    # Check if cert already exists and is still valid
+    if [ -f "${DEVENV_DIR}/certs/localhost.pem" ]; then
+        log "Certificate already exists at ${DEVENV_DIR}/certs/localhost.pem"
+        log "Run 'dev secure --renew' to regenerate."
+        if [ "${1:-}" != "--renew" ]; then
+            return 0
+        fi
+    fi
+
+    # Generate shared localhost cert
+    log "Generating mkcert certificate for localhost..."
+    mkcert \
+        -cert-file "${DEVENV_DIR}/certs/localhost.pem" \
+        -key-file  "${DEVENV_DIR}/certs/localhost-key.pem" \
+        localhost 127.0.0.1 ::1
+
+    log "Certificate generated. All projects now support HTTPS."
+    log "Access your project at https://localhost:\${HTTPS_PORT}"
+    info "  Cert: ${DEVENV_DIR}/certs/localhost.pem"
+    info "  Key:  ${DEVENV_DIR}/certs/localhost-key.pem"
+}
+
+cmd_mailhog() {
+    local mailhog_url="http://localhost:8025"
+    log "Opening Mailhog at ${mailhog_url}"
+    if ! lsof -iTCP:8025 -sTCP:LISTEN -t &>/dev/null; then
+        warn "Mailhog does not appear to be running on port 8025."
+        warn "Start it with: mailhog"
+    fi
+    open "${mailhog_url}" 2>/dev/null || info "Open manually: ${mailhog_url}"
+}
+
 cmd_help() {
     cat <<EOF
 dev v${VERSION} — Docker dev environment manager
@@ -501,6 +556,7 @@ Usage: dev <command> [args]
 
 Setup:
   setup                  One-time setup (create shared volumes, check deps)
+  secure [--renew]       Generate mkcert HTTPS certificate for all projects
   pull                   Pre-fetch all base images (Alpine PHP, nginx, composer)
   build-all              Pre-build all PHP + server image combos
   init <type> <name>     Bootstrap a new project (wordpress|laravel|package)
@@ -532,6 +588,9 @@ Info:
   ps                     List all devenv projects
   status                 Show current project config
   help                   Show this help
+
+Mail:
+  mailhog                Open Mailhog web UI (localhost:8025)
 EOF
 }
 
@@ -560,6 +619,8 @@ main() {
         php)        cmd_php "$@" ;;
         web)        cmd_web "$@" ;;
         xdebug)     cmd_xdebug "$@" ;;
+        secure)     cmd_secure "$@" ;;
+        mailhog)    cmd_mailhog "$@" ;;
         ps)         cmd_ps "$@" ;;
         status)     cmd_status "$@" ;;
         help|-h|--help) cmd_help ;;

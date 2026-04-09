@@ -22,6 +22,7 @@ services:
       - dev_composer_cache:/home/www-data/.composer/cache
       - dev_npm_cache:/home/www-data/.npm
       - ${PROJECT_ROOT:-.}:/var/www/html:cached
+      - ../php/msmtp.conf:/usr/local/etc/php/msmtp.conf:ro
     restart: unless-stopped
     logging:
       driver: json-file

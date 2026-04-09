@@ -11,6 +11,7 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-dev}-php
     ports:
       - "127.0.0.1:${HTTP_PORT:-8080}:80"
+      - "127.0.0.1:${HTTPS_PORT:-8443}:443"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -18,6 +19,8 @@ services:
       PROJECT_TYPE: wordpress
       WEB_SERVER: ${WEB_SERVER:-nginx}
       HTTP_PORT: ${HTTP_PORT:-8080}
+      HTTPS_PORT: ${HTTPS_PORT:-8443}
+      MAILHOG_HOST: host.docker.internal
       DB_HOST: host.docker.internal
       DB_PORT: ${DB_PORT:-3306}
       DB_NAME: ${DB_NAME:-devdb}
@@ -39,6 +42,8 @@ services:
       # Mount both nginx and apache configs — entrypoint activates the right one
       - ../nginx/wordpress.conf:/etc/nginx/http.d/default.conf:ro
       - ../apache/wordpress.conf:/etc/apache2/conf.d/app.conf:ro
+      - ../certs:/certs:ro
+      - ../php/msmtp.conf:/usr/local/etc/php/msmtp.conf:ro
     restart: unless-stopped
     logging:
       driver: json-file
