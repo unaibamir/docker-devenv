@@ -4,10 +4,11 @@
 
 | Command | What it does |
 |---|---|
-| `dev setup` | Creates shared Docker cache volumes (`dev_composer_cache`, `dev_npm_cache`), verifies Docker and MySQL are running. Run once on a fresh machine. |
+| `dev setup` | Creates shared Docker cache volumes, verifies Docker, MySQL, and Mailhog are running. Run once on a fresh machine. |
+| `dev secure [--renew]` | Generates a shared mkcert HTTPS certificate for `localhost`. Run once — all projects share it. `--renew` regenerates the cert. |
 | `dev pull` | Pre-fetches all Alpine base images (`php:7.4-fpm-alpine` through `php:8.4-fpm-alpine`, `composer:2`, `nginx:alpine`). Run once so builds skip network downloads. |
 | `dev build-all` | Builds all 12 image combos (6 PHP versions x 2 web servers). Run if you want instant PHP/server switching with zero build wait. |
-| `dev init <type> <name>` | Creates a new project at `~/sites/<name>/` with `.env` and `docker-compose.yml`. Types: `wordpress`, `laravel`, `package`. Auto-assigns next free port starting at 8080, creates MySQL database. Project names must be lowercase letters, numbers, hyphens, or underscores only (max 50 chars, must start with a letter or number, directory must not already exist). |
+| `dev init <type> <name>` | Creates a new project at `~/sites/<name>/` with `.env` and `docker-compose.yml`. Types: `wordpress`, `laravel`, `package`. Auto-assigns HTTP and HTTPS ports, creates MySQL database. Project names: lowercase letters, numbers, hyphens, underscores only (max 50 chars). |
 
 ## Lifecycle (daily use)
 
@@ -55,23 +56,32 @@
 | `dev status` | Shows current project's config and whether the container is running. |
 | `dev help` | Prints the help screen. |
 
+## Mail
+
+| Command | What it does |
+|---|---|
+| `dev mailhog` | Opens Mailhog web UI at `http://localhost:8025`. All PHP mail from containers is captured here. |
+
 ## Typical Workflow
 
 ```bash
-# First time setup
-dev setup && dev pull
+# First time setup (run once)
+dev setup          # verifies Docker, MySQL, Mailhog
+dev secure         # generates shared mkcert HTTPS cert
+dev pull           # pre-fetches base images
 
 # Start a WordPress plugin project
 dev init wordpress my-plugin
 cd ~/sites/my-plugin
-dev up                          # site at localhost:8080, admin/admin
+dev up             # site at http://localhost:8080 + https://localhost:8443
 
 # Work on it
 dev wp plugin list
 dev seed
-dev xdebug on                   # when you need to debug
-dev test                        # run tests
-dev php 8.2                     # test on older PHP
+dev xdebug on      # step debugging on port 9003
+dev test           # run tests
+dev php 8.2        # test on older PHP
+dev mailhog        # view captured emails at localhost:8025
 
 # Done for the day
 dev down
