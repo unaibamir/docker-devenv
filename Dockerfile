@@ -17,6 +17,8 @@ RUN apk add --no-cache \
     libxml2-dev \
     libzip-dev \
     linux-headers \
+    msmtp \
+    msmtp-mta \
     oniguruma-dev \
     unzip \
     zip \
